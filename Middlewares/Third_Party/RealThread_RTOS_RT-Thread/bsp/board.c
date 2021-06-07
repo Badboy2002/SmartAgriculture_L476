@@ -12,6 +12,73 @@
 #include <stdint.h>
 #include <rthw.h>
 #include <rtthread.h>
+#include <stm32l4xx.h>
+#include "main.h"
+
+extern UART_HandleTypeDef huart1;
+extern void MX_USART1_UART_Init(void);
+extern void SystemClock_Config(void);
+
+
+
+/*
+void HAL_UART_MspInit(UART_HandleTypeDef *huart)
+{
+	GPIO_InitTypeDef GPIO_InitStruct = {0};
+	if (huart->Instance == USART1)  // 这里要改
+	{
+		__HAL_RCC_USART1_CLK_ENABLE();   // 这里要改
+		__HAL_RCC_GPIOA_CLK_ENABLE();
+		
+		GPIO_InitStruct.Pin = USART_TX_Pin | USART_RX_Pin;
+		GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+		GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+		HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+	}
+}
+*/
+
+
+void rt_hw_console_output(const char *str)
+{
+        rt_size_t i = 0, size = 0;
+        char a = '\r';
+        
+        __HAL_UNLOCK(&huart1);
+        
+        size = rt_strlen(str);
+        for (i = 0; i < size; i++)
+        {
+        if (*(str + i) == '\n')
+        {
+                HAL_UART_Transmit(&huart1, (uint8_t *)&a, 1, 1);
+        }
+                HAL_UART_Transmit(&huart1, (uint8_t *)(str + i), 1, 1);
+        }
+}
+
+char rt_hw_console_getchar(void)
+{
+        int ch = -1;
+        if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE) != RESET)
+        {
+                ch = huart1.Instance->RDR & 0xff;
+        }
+        else
+        {
+                if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_ORE) != RESET)
+                {
+                        __HAL_UART_CLEAR_OREFLAG(&huart1);
+                }
+                rt_thread_mdelay(10);
+        }
+        return ch;
+}
+
+
+
+
+
 
 #define _SCB_BASE       (0xE000E010UL)
 #define _SYSTICK_CTRL   (*(rt_uint32_t *)(_SCB_BASE + 0x0))
@@ -44,6 +111,7 @@ static uint32_t _SysTick_Config(rt_uint32_t ticks)
     return 0;
 }
 
+
 #if defined(RT_USING_USER_MAIN) && defined(RT_USING_HEAP)
 #define RT_HEAP_SIZE 1024
 static uint32_t rt_heap[RT_HEAP_SIZE];     // heap default size: 4K(1024 * 4)
@@ -61,8 +129,18 @@ RT_WEAK void *rt_heap_end_get(void)
 /**
  * This function will initial your board.
  */
+
+
 void rt_hw_board_init()
 {
+	  HAL_Init();
+		SystemClock_Config();
+	
+    MX_USART1_UART_Init();
+	
+	  // MX_USART2_UART_Init();
+
+	  
     /* System Clock Update */
     SystemCoreClockUpdate();
     
@@ -84,6 +162,7 @@ void SysTick_Handler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
+	  HAL_IncTick();
     rt_tick_increase();
 
     /* leave interrupt */
