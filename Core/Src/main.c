@@ -62,12 +62,13 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN 0 */
 static void led_thread_entry(void* parameter)
 {
+	rt_kprintf("LED blink on\n");
 	while(1)
 	{
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-		rt_thread_mdelay(1500);
+		rt_thread_mdelay(1000);
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-		rt_thread_mdelay(500);
+		rt_thread_mdelay(1000);
 	}
 }
 
@@ -88,14 +89,14 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-//  HAL_Init();
+  HAL_Init();
 
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
   /* Configure the system clock */
-//  SystemClock_Config();
+  SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
 
@@ -103,11 +104,17 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-//  MX_USART2_UART_Init();
-//	MX_USART1_UART_Init();
-  MX_I2C1_Init();
   MX_I2C2_Init();
+  MX_USART1_UART_Init();
+  MX_UART4_Init();
+	
   /* USER CODE BEGIN 2 */
+	rt_kprintf("\n \\ | /\n");
+  rt_kprintf("- RT -     Thread Operating System\n");
+  rt_kprintf(" / | \\     %d.%d.%d build %s\n",
+               RT_VERSION, RT_SUBVERSION, RT_REVISION, __DATE__);
+  rt_kprintf(" 2006 - 2019 Copyright by rt-thread team\n");
+	
 	rt_err_t rst;
 	rst = rt_thread_init(&led_thread,
 						"ledshine",
@@ -122,13 +129,15 @@ int main(void)
 		rt_thread_startup(&led_thread);
 	}
 
-	rt_kprintf("RT-Nano start successfully");
+	rt_kprintf("RT-Thread start successfully!\n");
+	return 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   //while (1)
     /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
@@ -173,11 +182,10 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_USART2
-                              |RCC_PERIPHCLK_I2C1|RCC_PERIPHCLK_I2C2;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_UART4
+                              |RCC_PERIPHCLK_I2C2;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
-  PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
-  PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_PCLK1;
+  PeriphClkInit.Uart4ClockSelection = RCC_UART4CLKSOURCE_PCLK1;
   PeriphClkInit.I2c2ClockSelection = RCC_I2C2CLKSOURCE_PCLK1;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {

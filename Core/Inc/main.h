@@ -33,8 +33,6 @@ extern "C" {
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
-extern UART_HandleTypeDef huart1;
-extern void MX_USART1_UART_Init(void);
 
 /* USER CODE END Includes */
 

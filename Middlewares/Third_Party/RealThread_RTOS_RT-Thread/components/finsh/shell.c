@@ -618,7 +618,7 @@ void finsh_thread_entry(void *parameter)
             else if (ch == 0x44) /* left key */
             {
                 if (shell->line_curpos)
-                {
+                {    
                     rt_kprintf("\b");
                     shell->line_curpos --;
                 }
