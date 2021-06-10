@@ -12,35 +12,17 @@
 #include <stdint.h>
 #include <rthw.h>
 #include <rtthread.h>
-
 #include <stm32l4xx.h>
 
-extern void SystemClock_Config(void);
 
-/*
-void HAL_UART_MspInit(UART_HandleTypeDef *huart)
-{
-	GPIO_InitTypeDef GPIO_InitStruct = {0};
-	if (huart->Instance == USART2)  // 这里要改
-	{
-		__HAL_RCC_USART2_CLK_ENABLE();   // 这里要改
-		__HAL_RCC_GPIOA_CLK_ENABLE();
-		
-		GPIO_InitStruct.Pin = USART_TX_Pin | USART_RX_Pin;
-		GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-		GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-		HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-	}
-}
-*/
-
-// static UART_HandleTypeDef Uart2Handle; 
-
+/* USER CODE BEGIN 1 */
+	
+extern void SystemClock_Config(void); 
+extern void MX_UART4_Init(void);
 extern UART_HandleTypeDef huart4;
-
 void MY_UART4_Init(void)
 {
-	huart4.Instance = UART4;   // 这里要改
+	huart4.Instance = UART4;
 	huart4.Init.BaudRate = 115200;
 	huart4.Init.WordLength = UART_WORDLENGTH_8B;
 	huart4.Init.StopBits = UART_STOPBITS_1;
@@ -54,7 +36,6 @@ void MY_UART4_Init(void)
 	}
 	return ;
 }
-
 
 void rt_hw_console_output(const char *str)
 {
@@ -93,6 +74,12 @@ int rt_hw_console_getchar(void)
         return ch;
 }
 
+  /* USER CODE END 1 */
+
+
+
+
+  /* USER CODE BEGIN 2 */
 
 #define _SCB_BASE       (0xE000E010UL)
 #define _SYSTICK_CTRL   (*(rt_uint32_t *)(_SCB_BASE + 0x0))
@@ -139,24 +126,18 @@ RT_WEAK void *rt_heap_end_get(void)
 }
 #endif
 
-/**
+
+
+/*
  * This function will initial your board.
  */
-
-
-void rt_hw_board_init()
-{
+	void rt_hw_board_init()
+{	
 	  HAL_Init();
-//    MX_UART4_Init();
-	
-//    MY_UART4_Init();
-	
 		MX_UART4_Init();
 	  rt_kprintf("Uart init successfully\n");
 	
-	
 	  SystemClock_Config();
-	
     SystemCoreClockUpdate();
     
     /* System Tick Configuration */
@@ -183,3 +164,9 @@ void SysTick_Handler(void)
     /* leave interrupt */
     rt_interrupt_leave();
 }
+
+  /* USER CODE END 2 */
+
+
+
+

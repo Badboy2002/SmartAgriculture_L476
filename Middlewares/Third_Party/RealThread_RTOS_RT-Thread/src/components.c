@@ -219,7 +219,7 @@ int rtthread_startup(void)
 
     /* show RT-Thread version */
     rt_show_version();
-	
+
     /* timer system initialization */
     rt_system_timer_init();
 

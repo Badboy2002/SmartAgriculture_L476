@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "i2c.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -28,6 +29,9 @@
 #include <rtthread.h>
 static struct rt_thread led_thread;
 static char led_thread_stack[512];
+
+static struct rt_thread sensor_thread;
+static char sensor_thread_stack[512];
 
 /* USER CODE END Includes */
 
@@ -48,7 +52,25 @@ static char led_thread_stack[512];
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+void delay_us(uint16_t us)   // 利用定时器的us延时函数
+{
+    uint16_t differ=0xffff-us-5;
+    /*为防止因中断打断延时，造成计数错误.
+     如从0xfffE开始延时1us,但由于中断打断
+    （此时计数器仍在计数），本因计数至0xffff）
+    便停止计数，但由于错过计数值，并重载arr值，
+    导致实际延时(0xffff+1)us
+    */
+    HAL_TIM_Base_Start(&htim2);
 
+    __HAL_TIM_SetCounter(&htim2,differ);
+
+    while(differ<0xffff-5)
+    {
+        differ=__HAL_TIM_GetCounter(&htim2);
+    }
+    HAL_TIM_Base_Stop(&htim2);
+}
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -60,9 +82,9 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static void led_thread_entry(void* parameter)
+static void led_thread_entry(void* parameter)   // LED闪烁线程
 {
-	rt_kprintf("LED blink on\n");
+	rt_kprintf("LED blink start\n");
 	while(1)
 	{
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
@@ -72,6 +94,116 @@ static void led_thread_entry(void* parameter)
 	}
 }
 
+rt_uint8_t DHT11_Reset()    // 初始化DHT11 并进行数据发送前的握手
+{
+	GPIO_InitTypeDef GPIO_InitStruct = {0};
+	GPIO_InitStruct.Pin = DHT11_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;       // 推挽输出模式 上拉 
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+  HAL_GPIO_Init(DHT11_GPIO_Port, &GPIO_InitStruct);
+	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_RESET);
+	delay_us(30*1000);                                              // 总线拉低30ms 让DHT11检测到
+	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
+	delay_us(30);
+	
+	GPIO_InitStruct.Pin = DHT11_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;       // 进入输入模式 接受DHT11的信号
+	GPIO_InitStruct.Pull = GPIO_PULLUP;
+	HAL_GPIO_Init(DHT11_GPIO_Port, &GPIO_InitStruct);
+	
+	rt_uint8_t cnt=0;
+	while(HAL_GPIO_ReadPin(DHT11_GPIO_Port,DHT11_Pin)&&cnt<100) // 等待DHT11的低电平 
+	{
+		cnt++;
+		delay_us(1);
+	}
+	if (cnt>=100)
+			return 1; // DHT11无响应
+	
+	cnt=0;
+	while(!HAL_GPIO_ReadPin(DHT11_GPIO_Port,DHT11_Pin)&&cnt<100) // 等待DHT11的高电平 
+	{	
+		cnt++;
+		delay_us(1);
+	}
+	if (cnt>=100)
+		return 1; // DHT11无响应
+	
+	return 0; // DHT11初始化成功 准备读取数据
+}
+
+rt_int8_t DHT11_READ_BIT()  
+{
+	while(HAL_GPIO_ReadPin(DHT11_GPIO_Port,DHT11_Pin))
+		;  // 滤过一开始的低电平
+	while(!HAL_GPIO_ReadPin(DHT11_GPIO_Port,DHT11_Pin))
+		;  // 滤过高电平
+	
+	delay_us(35);            // 高电平持续27-28us表示0 持续70us表示1 则可通过延时35us后判断电平高低来判断
+	if(HAL_GPIO_ReadPin(DHT11_GPIO_Port,DHT11_Pin))
+		return 1;
+	else
+		return 0;
+}
+
+rt_uint8_t DHT11_READ_BYTE()
+{
+	rt_uint8_t mask,data;
+	data=0;
+	for(mask=0x80;mask!=0;mask>>=1)
+	{
+		if(DHT11_READ_BIT())
+			data |=mask;
+		else
+			data &=~mask;
+	}
+	return data;
+}
+
+rt_uint8_t DHT11_GET_DATA(rt_uint8_t *humidity, rt_uint8_t *temperature)
+{
+	rt_uint8_t i;
+	rt_uint8_t buf[5];
+	if(DHT11_Reset() == 0)
+	{
+		for (i=0; i<5; i++)
+		{
+			buf[i]=DHT11_READ_BYTE();
+		}
+		if( (buf[0]+buf[1]+buf[2]+buf[3]) == buf[4])
+		{
+			*humidity = buf[0];
+			*temperature = buf[2];
+			rt_kprintf("DTH11_DATA read successfully!\n");
+//			rt_kprintf("temperature:%u humidity:%u \n",buf[2], buf[0]);
+			return 0;
+		}
+		else
+		{
+			rt_kprintf("check failed!\n");
+			rt_kprintf("temperature:%u humidity:%u \n",buf[2], buf[0]);
+			return 1;
+		}
+			
+	}
+	else
+	{
+		rt_kprintf("DHT11 failed to init!\n");
+		return 1;
+	}
+}
+
+
+static void sensor_thread_entry(void* parameter)   // 传感器线程
+{
+	rt_kprintf("Sensor detection start\n");
+	rt_uint8_t humidity,temperature;
+	DHT11_GET_DATA(&humidity, &temperature);
+	rt_kprintf("temperature:%u humidity:%u\n",temperature,humidity);
+	
+}
+MSH_CMD_EXPORT(sensor_thread_entry, Sensors start to detect);
 
 
 /* USER CODE END 0 */
@@ -104,16 +236,18 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET); // GPIO高电平为温度传感器低功耗状态
   MX_I2C2_Init();
   MX_USART1_UART_Init();
   MX_UART4_Init();
-	
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 	rt_kprintf("\n \\ | /\n");
   rt_kprintf("- RT -     Thread Operating System\n");
   rt_kprintf(" / | \\     %d.%d.%d build %s\n",
                RT_VERSION, RT_SUBVERSION, RT_REVISION, __DATE__);
   rt_kprintf(" 2006 - 2019 Copyright by rt-thread team\n");
+	
 	
 	rt_err_t rst;
 	rst = rt_thread_init(&led_thread,
@@ -128,7 +262,23 @@ int main(void)
 	{
 		rt_thread_startup(&led_thread);
 	}
-
+	
+	
+	
+	rst = rt_thread_init(&sensor_thread,
+						"sensors detect",
+						sensor_thread_entry,
+						RT_NULL,
+						&sensor_thread_stack[0],
+						sizeof(sensor_thread_stack),
+						RT_THREAD_PRIORITY_MAX-2,
+						20);
+	if(rst == RT_EOK)
+	{
+		rt_thread_startup(&sensor_thread);
+	}
+	
+	
 	rt_kprintf("RT-Thread start successfully!\n");
 	return 0;
   /* USER CODE END 2 */
