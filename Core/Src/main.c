@@ -19,6 +19,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "i2c.h"
 #include "tim.h"
 #include "usart.h"
@@ -27,16 +28,18 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <rtthread.h>
-static struct rt_thread led_thread;
-static char led_thread_stack[512];
+#include "sgp30.h"
 
-static struct rt_thread sensor_thread;
-static char sensor_thread_stack[512];
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+static struct rt_thread led_thread;
+static char led_thread_stack[512];
+
+static struct rt_thread sensor_thread;
+static char sensor_thread_stack[512];
 
 /* USER CODE END PTD */
 
@@ -84,6 +87,13 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN 0 */
 static void led_thread_entry(void* parameter)   // LED闪烁线程
 {
+	GPIO_InitTypeDef GPIO_InitStruct = {0};
+	GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;       // 初始化LED灯GPIO 
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+	
 	rt_kprintf("LED blink start\n");
 	while(1)
 	{
@@ -93,12 +103,13 @@ static void led_thread_entry(void* parameter)   // LED闪烁线程
 		rt_thread_mdelay(1000);
 	}
 }
+MSH_CMD_EXPORT(led_thread_entry, LED blink);
 
 rt_uint8_t DHT11_Reset()    // 初始化DHT11 并进行数据发送前的握手
 {
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
 	GPIO_InitStruct.Pin = DHT11_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;       // 推挽输出模式 上拉 
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;       // 推挽输出模式 无上拉 
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
   HAL_GPIO_Init(DHT11_GPIO_Port, &GPIO_InitStruct);
@@ -200,8 +211,52 @@ static void sensor_thread_entry(void* parameter)   // 传感器线程
 	rt_kprintf("Sensor detection start\n");
 	rt_uint8_t humidity,temperature;
 	DHT11_GET_DATA(&humidity, &temperature);
-	rt_kprintf("temperature:%u humidity:%u\n",temperature,humidity);
+	rt_kprintf("---Temperature:%u 'C Humidity:%u%---\n",temperature,humidity);
 	
+	
+ rt_kprintf("Light resistor ADC start\n");
+	
+ HAL_ADC_Start(&hadc1);     //启动光敏电阻ADC转换
+ HAL_ADC_PollForConversion(&hadc1, 100);   //等待转换完成，50为最大等待时间，单位为ms
+ 
+ if(HAL_IS_BIT_SET(HAL_ADC_GetState(&hadc1), HAL_ADC_STATE_REG_EOC))
+ {
+  rt_uint16_t ADC_Value = HAL_ADC_GetValue(&hadc1);   //获取AD值
+  rt_kprintf("ADC1 Reading:%u\n",ADC_Value);
+	double voltage = ADC_Value*3.3/4096;
+  rt_kprintf("---Light sensor Voltage value:%u mV---\n", (unsigned int)(voltage*1000));
+ }
+ 
+  rt_kprintf("SGP30 start!\n");
+	MX_I2C2_Init();
+  
+	if (-1 == sgp30_init())
+			{
+					printf("sgp30 init fail\r\n");
+					/* 因为是裸机，所以直接进入死机 */
+					rt_kprintf("SGP30 init failed!\n");
+					while(1);
+			}
+			rt_kprintf("SGP30 init success(it takes about 15s to get the data since start)\n");
+			
+  while(1)
+	{
+		if( -1 == sgp30_read()) 
+		{
+			rt_kprintf("sgp30 read fail\n");
+			break;
+		}
+		else
+		{
+			if(sgp30_data.co2 == 400 )
+		  {
+				rt_kprintf("SGP30 is reading data\n");
+			}
+			else
+				rt_kprintf("---SGP30 read success, CO2:%4d ppm, TVOC:%4d ppd---\n", sgp30_data.co2, sgp30_data.tvoc);
+		}
+		rt_thread_mdelay(3000);
+	}
 }
 MSH_CMD_EXPORT(sensor_thread_entry, Sensors start to detect);
 
@@ -236,11 +291,13 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET); // GPIO高电平为温度传感器低功耗状态
   MX_I2C2_Init();
   MX_USART1_UART_Init();
   MX_UART4_Init();
   MX_TIM2_Init();
+  MX_ADC1_Init();
+	HAL_ADCEx_Calibration_Start(&hadc1, 100);
+	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
   /* USER CODE BEGIN 2 */
 	rt_kprintf("\n \\ | /\n");
   rt_kprintf("- RT -     Thread Operating System\n");
@@ -262,7 +319,6 @@ int main(void)
 	{
 		rt_thread_startup(&led_thread);
 	}
-	
 	
 	
 	rst = rt_thread_init(&sensor_thread,
@@ -333,10 +389,18 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_UART4
-                              |RCC_PERIPHCLK_I2C2;
+                              |RCC_PERIPHCLK_I2C2|RCC_PERIPHCLK_ADC;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
   PeriphClkInit.Uart4ClockSelection = RCC_UART4CLKSOURCE_PCLK1;
   PeriphClkInit.I2c2ClockSelection = RCC_I2C2CLKSOURCE_PCLK1;
+  PeriphClkInit.AdcClockSelection = RCC_ADCCLKSOURCE_PLLSAI1;
+  PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_HSI;
+  PeriphClkInit.PLLSAI1.PLLSAI1M = 1;
+  PeriphClkInit.PLLSAI1.PLLSAI1N = 8;
+  PeriphClkInit.PLLSAI1.PLLSAI1P = RCC_PLLP_DIV7;
+  PeriphClkInit.PLLSAI1.PLLSAI1Q = RCC_PLLQ_DIV2;
+  PeriphClkInit.PLLSAI1.PLLSAI1R = RCC_PLLR_DIV2;
+  PeriphClkInit.PLLSAI1.PLLSAI1ClockOut = RCC_PLLSAI1_ADC1CLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
