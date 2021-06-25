@@ -46,12 +46,11 @@ int rt_hw_console_getchar(void)
         }
         else
         {
-                if(__HAL_UART_GET_FLAG(&huart4, UART_FLAG_ORE) != RESET)
-                {
-                        __HAL_UART_CLEAR_OREFLAG(&huart4);
-									
-                }
-                rt_thread_mdelay(10);
+           if(__HAL_UART_GET_FLAG(&huart4, UART_FLAG_ORE) != RESET)
+            {
+							__HAL_UART_CLEAR_OREFLAG(&huart4);
+            }
+            rt_thread_mdelay(10);
         }
         return ch;
 }

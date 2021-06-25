@@ -41,7 +41,14 @@ static struct rt_thread sensor_thread;
 static char sensor_thread_stack[512];
 static struct rt_thread tester_thread;
 static char tester_thread_stack[512];
+static struct rt_thread watchdog_thread;
+static char watchdog_thread_stack[512];
 static uint32_t Lux = 1000;
+static int cloudmessage = 0;
+
+rt_uint8_t humidity = 50,temperature = 25;
+rt_uint16_t ADC_Value = 1000;
+double voltage;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -50,6 +57,7 @@ static uint32_t Lux = 1000;
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart4;
 extern UART_HandleTypeDef huart5;
 
@@ -81,19 +89,32 @@ void delay_us(uint16_t us)   // 基于定时器的us延时函数
 
 void UART5_output(const char *str)       
 {
-        rt_size_t i = 0, size = 0;
-        uint8_t a = 0xff;
-        __HAL_UNLOCK(&huart5);
-        
-        size = rt_strlen(str);
-        for (i = 0; i < size; i++)
-        {
-					HAL_UART_Transmit(&huart5, (uint8_t*)(str + i), 1, 1);
-        }
-				HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);  // 结束符
-				HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);
-				HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);
+	rt_size_t i = 0, size = 0;
+  uint8_t a = 0xff;
+  __HAL_UNLOCK(&huart5);
+  size = rt_strlen(str);
+  for (i = 0; i < size; i++)
+  {
+		HAL_UART_Transmit(&huart5, (uint8_t*)(str + i), 1, 1);
+  }
+	HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);
+	HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);
+	HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);
 }
+
+
+void USART1_output(const char *str)
+{
+	rt_size_t i = 0, size = 0;
+  uint8_t a = '\n';
+  __HAL_UNLOCK(&huart1);
+  size = rt_strlen(str);
+  for (i = 0; i < size; i++)
+  {
+		HAL_UART_Transmit(&huart1, (uint8_t*)(str + i), 1, 1);
+  }
+}
+
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) // 按键中断程序
 {
@@ -240,9 +261,6 @@ rt_uint8_t DHT11_GET_DATA(rt_uint8_t *humidity, rt_uint8_t *temperature) // 整理
 static void sensor_thread_entry(void* parameter)  // 传感器线程
 {
 	rt_kprintf("Sensor detection start\n");
-	rt_uint8_t humidity = 50,temperature = 25;
-	rt_uint16_t ADC_Value = 1000;
-	double voltage = ADC_Value*3.3/4096;
 	MX_I2C2_Init();
 	rt_kprintf("SGP30 start!\n");
 	if (-1 == sgp30_init())
@@ -258,8 +276,8 @@ static void sensor_thread_entry(void* parameter)  // 传感器线程
 {
 	DHT11_GET_DATA(&humidity, &temperature);
   rt_kprintf("---Temperature:%u 'C Humidity:%u%---\n", temperature, humidity);
- HAL_ADC_Start(&hadc1);     //启动光敏电阻ADC转换
- HAL_ADC_PollForConversion(&hadc1, 100);   //等待转换完成，50为最大等待时间，单位为ms
+	HAL_ADC_Start(&hadc1);     //启动光敏电阻ADC转换
+	HAL_ADC_PollForConversion(&hadc1, 100);   //等待转换完成，50为最大等待时间，单位为ms
  
  if(HAL_IS_BIT_SET(HAL_ADC_GetState(&hadc1), HAL_ADC_STATE_REG_EOC))
  {
@@ -313,8 +331,20 @@ MSH_CMD_EXPORT(sensor_thread_entry, Sensors start to detect);
 
 static void tester_thread_entry(void* parameter)
 {
+	char connect[] = "AT+CLOUDAUTH=\"a1iKWF07Pbb\",\"ADP_L610\",\"7727d7aad67ccb07a259e5b27ba4b6e1\",\"iot-as-mqtt.cn-shanghai.aliyuncs.com\"\r\n";
+	char keep_alive[] = "AT+CLOUDCONN=80,0,4\r\n";
+	char sendto[] = "AT+CLOUDPUB=\"/a1iKWF07Pbb/ADP_L610/user/get\",1,\"MCU sucess\"\r\n";
+	
+	char Data_string[100] = {0};      //  构建串口屏的字符串命令
+	
+	
+	USART1_output(connect);
+	rt_thread_mdelay(1000);
+	USART1_output(keep_alive);
+	rt_thread_mdelay(1000);
 	while(1)
 	{
+		/*
 		if(Lux<1000)
 		{
 			for(int i=0;i<10;i++)
@@ -325,10 +355,27 @@ static void tester_thread_entry(void* parameter)
 				rt_thread_mdelay(100);
 			}
 		}
-		
-		
-		
-		rt_thread_mdelay(500);
+		*/
+		sprintf(Data_string,"AT+CLOUDPUB=\"/a1iKWF07Pbb/ADP_L610/user/get\",1,\"Temperature:%u Humidity:%u Lux:%u CO2:%u\"\r\n", temperature, humidity, Lux, sgp30_data.co2);
+		USART1_output(Data_string);
+		rt_kprintf("Send message to Ali_Cloud");
+		rt_thread_mdelay(30000);
+	}
+}
+
+static void watchdog_thread_entry(void* parameter)
+{
+	while(1)
+	{
+		if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE) != RESET)
+    {
+       cloudmessage = huart1.Instance->RDR & 0xff;
+			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_RESET);
+			 rt_thread_mdelay(2000);
+			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
+    }
+		__HAL_UART_CLEAR_OREFLAG(&huart1);
+		rt_thread_mdelay(10);
 	}
 }
 
@@ -419,6 +466,18 @@ int main(void)
 		rt_thread_startup(&tester_thread);
 	}
 	
+	rst = rt_thread_init(&watchdog_thread,
+						"watchdog thread",
+						watchdog_thread_entry,
+						RT_NULL,
+						&watchdog_thread_stack[0],
+						sizeof(watchdog_thread_stack),
+						RT_THREAD_PRIORITY_MAX-2,
+						5);
+	if(rst == RT_EOK)
+	{
+		rt_thread_startup(&watchdog_thread);
+	}
 	
 	rt_kprintf("RT-Thread start successfully!\n");
 	return 0;
