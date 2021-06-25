@@ -29,7 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include <rtthread.h>
 #include "sgp30.h"
-
+#include <string.h> 
 
 /* USER CODE END Includes */
 
@@ -37,7 +37,6 @@
 /* USER CODE BEGIN PTD */
 static struct rt_thread led_thread;
 static char led_thread_stack[512];
-
 static struct rt_thread sensor_thread;
 static char sensor_thread_stack[512];
 
@@ -50,12 +49,14 @@ static char sensor_thread_stack[512];
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
+extern UART_HandleTypeDef huart4;
+extern UART_HandleTypeDef huart5;
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-void delay_us(uint16_t us)   // 利用定时器的us延时函数
+void delay_us(uint16_t us)   // 基于定时器的us延时函数
 {
     uint16_t differ=0xffff-us-5;
     /*为防止因中断打断延时，造成计数错误.
@@ -74,6 +75,24 @@ void delay_us(uint16_t us)   // 利用定时器的us延时函数
     }
     HAL_TIM_Base_Stop(&htim2);
 }
+
+
+void UART5_output(const char *str)       
+{
+        rt_size_t i = 0, size = 0;
+        uint8_t a = 0xff;
+        __HAL_UNLOCK(&huart5);
+        
+        size = rt_strlen(str);
+        for (i = 0; i < size; i++)
+        {
+					HAL_UART_Transmit(&huart5, (uint8_t*)(str + i), 1, 1);
+        }
+				HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);  // 结束符
+				HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);
+				HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);
+}
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -113,6 +132,7 @@ rt_uint8_t DHT11_Reset()    // 初始化DHT11 并进行数据发送前的握手
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
   HAL_GPIO_Init(DHT11_GPIO_Port, &GPIO_InitStruct);
+	
 	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_RESET);
 	delay_us(30*1000);                                              // 总线拉低30ms 让DHT11检测到
 	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
@@ -144,7 +164,7 @@ rt_uint8_t DHT11_Reset()    // 初始化DHT11 并进行数据发送前的握手
 	return 0; // DHT11初始化成功 准备读取数据
 }
 
-rt_int8_t DHT11_READ_BIT()  
+rt_int8_t DHT11_READ_BIT()  // 读取一个Bit
 {
 	while(HAL_GPIO_ReadPin(DHT11_GPIO_Port,DHT11_Pin))
 		;  // 滤过一开始的低电平
@@ -158,7 +178,7 @@ rt_int8_t DHT11_READ_BIT()
 		return 0;
 }
 
-rt_uint8_t DHT11_READ_BYTE()
+rt_uint8_t DHT11_READ_BYTE() // 读取一个Byte
 {
 	rt_uint8_t mask,data;
 	data=0;
@@ -172,7 +192,7 @@ rt_uint8_t DHT11_READ_BYTE()
 	return data;
 }
 
-rt_uint8_t DHT11_GET_DATA(rt_uint8_t *humidity, rt_uint8_t *temperature)
+rt_uint8_t DHT11_GET_DATA(rt_uint8_t *humidity, rt_uint8_t *temperature) // 整理并验证数据
 {
 	rt_uint8_t i;
 	rt_uint8_t buf[5];
@@ -196,7 +216,6 @@ rt_uint8_t DHT11_GET_DATA(rt_uint8_t *humidity, rt_uint8_t *temperature)
 			rt_kprintf("temperature:%u humidity:%u \n",buf[2], buf[0]);
 			return 1;
 		}
-			
 	}
 	else
 	{
@@ -206,10 +225,12 @@ rt_uint8_t DHT11_GET_DATA(rt_uint8_t *humidity, rt_uint8_t *temperature)
 }
 
 
-static void sensor_thread_entry(void* parameter)   // 传感器线程
+static void sensor_thread_entry(void* parameter) 
 {
 	rt_kprintf("Sensor detection start\n");
 	rt_uint8_t humidity,temperature;
+	rt_uint16_t ADC_Value;
+	double voltage;
 	DHT11_GET_DATA(&humidity, &temperature);
 	rt_kprintf("---Temperature:%u 'C Humidity:%u%---\n",temperature,humidity);
 	
@@ -221,24 +242,37 @@ static void sensor_thread_entry(void* parameter)   // 传感器线程
  
  if(HAL_IS_BIT_SET(HAL_ADC_GetState(&hadc1), HAL_ADC_STATE_REG_EOC))
  {
-  rt_uint16_t ADC_Value = HAL_ADC_GetValue(&hadc1);   //获取AD值
-  rt_kprintf("ADC1 Reading:%u\n",ADC_Value);
-	double voltage = ADC_Value*3.3/4096;
+  ADC_Value = HAL_ADC_GetValue(&hadc1);   //获取AD值
+  rt_kprintf("ADC1 Reading:%u\n", ADC_Value);
+	voltage = ADC_Value*3.3/4096;
   rt_kprintf("---Light sensor Voltage value:%u mV---\n", (unsigned int)(voltage*1000));
  }
  
+	char temperature_string[20] = {0};
+	sprintf(temperature_string,"t0.txt=\"%u'C\"",temperature);
+	
+	char humidity_string[20] = {0};
+	sprintf(humidity_string,"t1.txt=\"%u%%\"",humidity/2);
+	
+	char light_string[20] = {0};
+	sprintf(light_string,"t2.txt=\"%ulx\"", (4096-(unsigned int)(voltage*1000))/2);
+ 	UART5_output(temperature_string);
+	UART5_output(humidity_string);
+	UART5_output(light_string);
+	
+	
   rt_kprintf("SGP30 start!\n");
 	MX_I2C2_Init();
   
 	if (-1 == sgp30_init())
 			{
 					printf("sgp30 init fail\r\n");
-					/* 因为是裸机，所以直接进入死机 */
+					/* 直接进入死机 */
 					rt_kprintf("SGP30 init failed!\n");
 					while(1);
 			}
-			rt_kprintf("SGP30 init success(it takes about 15s to get the data since start)\n");
-			
+	rt_kprintf("SGP30 init success(it takes about 15s to get the data since start)\n");
+
   while(1)
 	{
 		if( -1 == sgp30_read()) 
@@ -253,13 +287,19 @@ static void sensor_thread_entry(void* parameter)   // 传感器线程
 				rt_kprintf("SGP30 is reading data\n");
 			}
 			else
+			{
 				rt_kprintf("---SGP30 read success, CO2:%4d ppm, TVOC:%4d ppd---\n", sgp30_data.co2, sgp30_data.tvoc);
+				break;
+			}
 		}
 		rt_thread_mdelay(3000);
 	}
+	
+	char CO2_string[20] = {0};
+	sprintf(CO2_string,"t3.txt=\"CO2:%uppm\"",sgp30_data.co2);
+	UART5_output(CO2_string);
 }
 MSH_CMD_EXPORT(sensor_thread_entry, Sensors start to detect);
-
 
 /* USER CODE END 0 */
 
@@ -296,15 +336,15 @@ int main(void)
   MX_UART4_Init();
   MX_TIM2_Init();
   MX_ADC1_Init();
-	HAL_ADCEx_Calibration_Start(&hadc1, 100);
-	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
+  MX_UART5_Init();
   /* USER CODE BEGIN 2 */
-	rt_kprintf("\n \\ | /\n");
-  rt_kprintf("- RT -     Thread Operating System\n");
-  rt_kprintf(" / | \\     %d.%d.%d build %s\n",
-               RT_VERSION, RT_SUBVERSION, RT_REVISION, __DATE__);
-  rt_kprintf(" 2006 - 2019 Copyright by rt-thread team\n");
-	
+	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
+	HAL_ADCEx_Calibration_Start(&hadc1, 100);
+	UART5_output("t0.txt=\"26'C\"");
+	UART5_output("t1.txt=\"50%\"");
+	UART5_output("t2.txt=\"1000lx\"");
+	UART5_output("t3.txt=\"CO2:400ppm\"");
+	rt_thread_mdelay(2000);
 	
 	rt_err_t rst;
 	rst = rt_thread_init(&led_thread,
@@ -320,7 +360,6 @@ int main(void)
 		rt_thread_startup(&led_thread);
 	}
 	
-	
 	rst = rt_thread_init(&sensor_thread,
 						"sensors detect",
 						sensor_thread_entry,
@@ -333,18 +372,17 @@ int main(void)
 	{
 		rt_thread_startup(&sensor_thread);
 	}
-	
-	
 	rt_kprintf("RT-Thread start successfully!\n");
 	return 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  //while (1)
+	
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	
   /* USER CODE END 3 */
 }
 
@@ -389,9 +427,11 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_UART4
-                              |RCC_PERIPHCLK_I2C2|RCC_PERIPHCLK_ADC;
+                              |RCC_PERIPHCLK_UART5|RCC_PERIPHCLK_I2C2
+                              |RCC_PERIPHCLK_ADC;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
   PeriphClkInit.Uart4ClockSelection = RCC_UART4CLKSOURCE_PCLK1;
+  PeriphClkInit.Uart5ClockSelection = RCC_UART5CLKSOURCE_PCLK1;
   PeriphClkInit.I2c2ClockSelection = RCC_I2C2CLKSOURCE_PCLK1;
   PeriphClkInit.AdcClockSelection = RCC_ADCCLKSOURCE_PLLSAI1;
   PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_HSI;

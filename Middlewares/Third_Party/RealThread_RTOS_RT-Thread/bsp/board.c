@@ -20,24 +20,8 @@
 extern void SystemClock_Config(void); 
 extern void MX_UART4_Init(void);
 extern UART_HandleTypeDef huart4;
-void MY_UART4_Init(void)
-{
-	huart4.Instance = UART4;
-	huart4.Init.BaudRate = 115200;
-	huart4.Init.WordLength = UART_WORDLENGTH_8B;
-	huart4.Init.StopBits = UART_STOPBITS_1;
-	huart4.Init.Parity = UART_PARITY_NONE;
-	huart4.Init.Mode = UART_MODE_TX_RX;
-	huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-	huart4.Init.OverSampling = UART_OVERSAMPLING_16;
-	if (HAL_UART_Init(&huart4) != HAL_OK )
-	{
-		while(1);
-	}
-	return ;
-}
 
-void rt_hw_console_output(const char *str)
+void rt_hw_console_output(const char *str)       
 {
         rt_size_t i = 0, size = 0;
         char a = '\r';
@@ -134,12 +118,10 @@ RT_WEAK void *rt_heap_end_get(void)
 	void rt_hw_board_init()
 {	
 	  HAL_Init();
-		MX_UART4_Init();
-	  rt_kprintf("Uart init successfully\n");
-	
-	  SystemClock_Config();
-    SystemCoreClockUpdate();
-    
+		SystemClock_Config();
+		SystemCoreClockUpdate();
+    MX_UART4_Init();
+
     /* System Tick Configuration */
     _SysTick_Config(SystemCoreClock / RT_TICK_PER_SECOND);
 
@@ -158,7 +140,7 @@ void SysTick_Handler(void)
     /* enter interrupt */
     rt_interrupt_enter();
 
-	  HAL_IncTick();
+//	  HAL_IncTick();
     rt_tick_increase();
 
     /* leave interrupt */

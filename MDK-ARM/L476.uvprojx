@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32L476xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../RT-Thread;          ../Core/Inc;          ../Drivers/STM32L4xx_HAL_Driver/Inc;          ../Drivers/STM32L4xx_HAL_Driver/Inc/Legacy;          ../Drivers/CMSIS/Device/ST/STM32L4xx/Include;          ../Drivers/CMSIS/Include;          ../Middlewares/Third_Party/RealThread_RTOS_RT-Thread/include/;        ../Middlewares/Third_Party/RealThread_RTOS_RT-Thread/components/finsh/</IncludePath>
+              <IncludePath>../RT-Thread;           ../Core/Inc;           ../Drivers/STM32L4xx_HAL_Driver/Inc;           ../Drivers/STM32L4xx_HAL_Driver/Inc/Legacy;           ../Drivers/CMSIS/Device/ST/STM32L4xx/Include;           ../Drivers/CMSIS/Include;           ../Middlewares/Third_Party/RealThread_RTOS_RT-Thread/include/;         ../Middlewares/Third_Party/RealThread_RTOS_RT-Thread/components/finsh/</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -394,6 +394,11 @@
         <Group>
           <GroupName>Application/User/Core</GroupName>
           <Files>
+            <File>
+              <FileName>sgp30.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\sgp30.c</FilePath>
+            </File>
             <File>
               <FileName>main.c</FileName>
               <FileType>1</FileType>
@@ -744,11 +749,6 @@
                   </Cads>
                 </FileArmAds>
               </FileOption>
-            </File>
-            <File>
-              <FileName>sgp30.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\sgp30.c</FilePath>
             </File>
           </Files>
         </Group>
