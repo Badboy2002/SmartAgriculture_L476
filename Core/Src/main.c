@@ -39,7 +39,9 @@ static struct rt_thread led_thread;
 static char led_thread_stack[512];
 static struct rt_thread sensor_thread;
 static char sensor_thread_stack[512];
-
+static struct rt_thread tester_thread;
+static char tester_thread_stack[512];
+static uint32_t Lux = 1000;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -48,9 +50,9 @@ static char sensor_thread_stack[512];
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 extern UART_HandleTypeDef huart4;
 extern UART_HandleTypeDef huart5;
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -93,6 +95,16 @@ void UART5_output(const char *str)
 				HAL_UART_Transmit(&huart5, (uint8_t*)&a, 1, 1);
 }
 
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) // 按键中断程序
+{
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_RESET);
+	for(int i=0;i<10;i++)
+	{
+		delay_us(50*1000);   
+		delay_us(50*1000);
+	}
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
+}
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -225,18 +237,27 @@ rt_uint8_t DHT11_GET_DATA(rt_uint8_t *humidity, rt_uint8_t *temperature) // 整理
 }
 
 
-static void sensor_thread_entry(void* parameter) 
+static void sensor_thread_entry(void* parameter)  // 传感器线程
 {
 	rt_kprintf("Sensor detection start\n");
-	rt_uint8_t humidity,temperature;
-	rt_uint16_t ADC_Value;
-	double voltage;
+	rt_uint8_t humidity = 50,temperature = 25;
+	rt_uint16_t ADC_Value = 1000;
+	double voltage = ADC_Value*3.3/4096;
+	MX_I2C2_Init();
+	rt_kprintf("SGP30 start!\n");
+	if (-1 == sgp30_init())
+			{
+					printf("sgp30 init fail\r\n");
+					/* 直接进入死机 */
+					rt_kprintf("SGP30 init failed!\n");
+					while(1);
+			}
+	rt_kprintf("SGP30 init success(it takes about 15s to get the data since start)\n");
+
+	while(1)
+{
 	DHT11_GET_DATA(&humidity, &temperature);
-	rt_kprintf("---Temperature:%u 'C Humidity:%u%---\n",temperature,humidity);
-	
-	
- rt_kprintf("Light resistor ADC start\n");
-	
+  rt_kprintf("---Temperature:%u 'C Humidity:%u%---\n", temperature, humidity);
  HAL_ADC_Start(&hadc1);     //启动光敏电阻ADC转换
  HAL_ADC_PollForConversion(&hadc1, 100);   //等待转换完成，50为最大等待时间，单位为ms
  
@@ -248,32 +269,20 @@ static void sensor_thread_entry(void* parameter)
   rt_kprintf("---Light sensor Voltage value:%u mV---\n", (unsigned int)(voltage*1000));
  }
  
-	char temperature_string[20] = {0};
-	sprintf(temperature_string,"t0.txt=\"%u'C\"",temperature);
+	char temperature_string[20] = {0};      //  构建串口屏的字符串命令
+	sprintf(temperature_string,"t0.txt=\"%u'C\"", temperature);
 	
 	char humidity_string[20] = {0};
-	sprintf(humidity_string,"t1.txt=\"%u%%\"",humidity/2);
+	sprintf(humidity_string,"t1.txt=\"%u%%\"", humidity/2);
 	
 	char light_string[20] = {0};
-	sprintf(light_string,"t2.txt=\"%ulx\"", (4096-(unsigned int)(voltage*1000))/2);
+	Lux = (4096-(unsigned int)(voltage*1000))/2;
+	sprintf(light_string,"t2.txt=\"%ulx\"", Lux);
  	UART5_output(temperature_string);
 	UART5_output(humidity_string);
 	UART5_output(light_string);
 	
-	
-  rt_kprintf("SGP30 start!\n");
-	MX_I2C2_Init();
-  
-	if (-1 == sgp30_init())
-			{
-					printf("sgp30 init fail\r\n");
-					/* 直接进入死机 */
-					rt_kprintf("SGP30 init failed!\n");
-					while(1);
-			}
-	rt_kprintf("SGP30 init success(it takes about 15s to get the data since start)\n");
-
-  while(1)
+  while(1) 
 	{
 		if( -1 == sgp30_read()) 
 		{
@@ -284,7 +293,7 @@ static void sensor_thread_entry(void* parameter)
 		{
 			if(sgp30_data.co2 == 400 )
 		  {
-				rt_kprintf("SGP30 is reading data\n");
+				rt_kprintf("SGP30 is reading data...\n");
 			}
 			else
 			{
@@ -294,12 +303,35 @@ static void sensor_thread_entry(void* parameter)
 		}
 		rt_thread_mdelay(3000);
 	}
-	
 	char CO2_string[20] = {0};
 	sprintf(CO2_string,"t3.txt=\"CO2:%uppm\"",sgp30_data.co2);
 	UART5_output(CO2_string);
+	rt_thread_mdelay(10000);
+}
 }
 MSH_CMD_EXPORT(sensor_thread_entry, Sensors start to detect);
+
+static void tester_thread_entry(void* parameter)
+{
+	while(1)
+	{
+		if(Lux<1000)
+		{
+			for(int i=0;i<10;i++)
+			{
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+				rt_thread_mdelay(100);
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+				rt_thread_mdelay(100);
+			}
+		}
+		
+		
+		
+		rt_thread_mdelay(500);
+	}
+}
+
 
 /* USER CODE END 0 */
 
@@ -339,6 +371,7 @@ int main(void)
   MX_UART5_Init();
   /* USER CODE BEGIN 2 */
 	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
 	HAL_ADCEx_Calibration_Start(&hadc1, 100);
 	UART5_output("t0.txt=\"26'C\"");
 	UART5_output("t1.txt=\"50%\"");
@@ -372,6 +405,21 @@ int main(void)
 	{
 		rt_thread_startup(&sensor_thread);
 	}
+	
+	rst = rt_thread_init(&tester_thread,
+						"tester thread",
+						tester_thread_entry,
+						RT_NULL,
+						&tester_thread_stack[0],
+						sizeof(tester_thread_stack),
+						RT_THREAD_PRIORITY_MAX-2,
+						5);
+	if(rst == RT_EOK)
+	{
+		rt_thread_startup(&tester_thread);
+	}
+	
+	
 	rt_kprintf("RT-Thread start successfully!\n");
 	return 0;
   /* USER CODE END 2 */
@@ -382,6 +430,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	
 	
   /* USER CODE END 3 */
 }

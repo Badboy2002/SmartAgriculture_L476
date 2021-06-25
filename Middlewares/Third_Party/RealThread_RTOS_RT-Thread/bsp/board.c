@@ -1,4 +1,4 @@
-/*
+ /*
  * Copyright (c) 2006-2019, RT-Thread Development Team
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -14,8 +14,6 @@
 #include <rtthread.h>
 #include <stm32l4xx.h>
 
-
-/* USER CODE BEGIN 1 */
 	
 extern void SystemClock_Config(void); 
 extern void MX_UART4_Init(void);
@@ -58,12 +56,6 @@ int rt_hw_console_getchar(void)
         return ch;
 }
 
-  /* USER CODE END 1 */
-
-
-
-
-  /* USER CODE BEGIN 2 */
 
 #define _SCB_BASE       (0xE000E010UL)
 #define _SYSTICK_CTRL   (*(rt_uint32_t *)(_SCB_BASE + 0x0))
@@ -87,7 +79,6 @@ static uint32_t _SysTick_Config(rt_uint32_t ticks)
     {
         return 1;
     }
-    
     _SYSTICK_LOAD = ticks - 1; 
     _SYSTICK_PRI = 0xFF;
     _SYSTICK_VAL  = 0;
@@ -113,15 +104,15 @@ RT_WEAK void *rt_heap_end_get(void)
 
 
 /*
- * This function will initial your board.
+ This function will initial your board.
  */
-	void rt_hw_board_init()
-{	
-	  HAL_Init();
+void rt_hw_board_init()
+{
+		HAL_Init();
 		SystemClock_Config();
 		SystemCoreClockUpdate();
     MX_UART4_Init();
-
+	
     /* System Tick Configuration */
     _SysTick_Config(SystemCoreClock / RT_TICK_PER_SECOND);
 
@@ -146,9 +137,3 @@ void SysTick_Handler(void)
     /* leave interrupt */
     rt_interrupt_leave();
 }
-
-  /* USER CODE END 2 */
-
-
-
-
