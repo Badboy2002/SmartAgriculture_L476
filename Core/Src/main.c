@@ -37,35 +37,47 @@
 /* USER CODE BEGIN PTD */
 static struct rt_thread led_thread;
 static char led_thread_stack[512];
+
 static struct rt_thread sensor_thread;
-static char sensor_thread_stack[512];
-static struct rt_thread tester_thread;
-static char tester_thread_stack[512];
+static char sensor_thread_stack[1024];
+
+static struct rt_thread L610_thread;
+static char L610_thread_stack[1024];
+
 static struct rt_thread watchdog_thread;
 static char watchdog_thread_stack[512];
-static uint32_t Lux = 1000;
-static int cloudmessage = 0;
 
-rt_uint8_t humidity = 50,temperature = 25;
-rt_uint16_t ADC_Value = 1000;
-double voltage;
+static struct rt_thread SGP30_thread;
+static char SGP30_thread_stack[512];
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+uint32_t Lux = 1000;   
+uint32_t cloudmessage = 0;
+rt_uint8_t humidity = 50,temperature = 25;
+rt_uint16_t ADC_Value = 1000;
+double voltage;
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-extern UART_HandleTypeDef huart1;
-extern UART_HandleTypeDef huart4;
-extern UART_HandleTypeDef huart5;
+extern UART_HandleTypeDef huart1;  // 广和通
+extern UART_HandleTypeDef huart4;  // 电脑串口
+extern UART_HandleTypeDef huart5;  // 串口屏
 
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+/* USER CODE BEGIN PFP */
 void delay_us(uint16_t us)   // 基于定时器的us延时函数
 {
     uint16_t differ=0xffff-us-5;
@@ -87,7 +99,7 @@ void delay_us(uint16_t us)   // 基于定时器的us延时函数
 }
 
 
-void UART5_output(const char *str)       
+void UART5_output(const char *str)   // 串口屏的串口输出
 {
 	rt_size_t i = 0, size = 0;
   uint8_t a = 0xff;
@@ -103,10 +115,9 @@ void UART5_output(const char *str)
 }
 
 
-void USART1_output(const char *str)
+void USART1_output(const char *str)  // 广和通串口
 {
 	rt_size_t i = 0, size = 0;
-  uint8_t a = '\n';
   __HAL_UNLOCK(&huart1);
   size = rt_strlen(str);
   for (i = 0; i < size; i++)
@@ -126,36 +137,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) // 按键中断程序
 	}
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
 }
-/* USER CODE END PV */
-
-/* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-/* USER CODE BEGIN PFP */
-
-
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-static void led_thread_entry(void* parameter)   // LED闪烁线程
-{
-	GPIO_InitTypeDef GPIO_InitStruct = {0};
-	GPIO_InitStruct.Pin = GPIO_PIN_5;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;       // 初始化LED灯GPIO 
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-	
-	rt_kprintf("LED blink start\n");
-	while(1)
-	{
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-		rt_thread_mdelay(1000);
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-		rt_thread_mdelay(1000);
-	}
-}
-MSH_CMD_EXPORT(led_thread_entry, LED blink);
 
 rt_uint8_t DHT11_Reset()    // 初始化DHT11 并进行数据发送前的握手
 {
@@ -256,51 +237,130 @@ rt_uint8_t DHT11_GET_DATA(rt_uint8_t *humidity, rt_uint8_t *temperature) // 整理
 		return 1;
 	}
 }
+/* USER CODE END PFP */
 
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
 
-static void sensor_thread_entry(void* parameter)  // 传感器线程
+static void sensor_thread_entry(void* parameter)  // 传感器线程 温度、湿度、光照
 {
 	rt_kprintf("Sensor detection start\n");
+	while(1)
+{
+	char temperature_string[20] = {0};      //  构建串口屏的字符串命令
+	char humidity_string[20] = {0};
+	char light_string[20] = {0};
+	DHT11_GET_DATA(&humidity, &temperature); // 读取温湿度
+  rt_kprintf("---Temperature:%u 'C Humidity:%u%---\n", temperature, humidity/2);
+	HAL_ADC_Start(&hadc1);     //启动光敏电阻ADC转换
+	HAL_ADC_PollForConversion(&hadc1, 100);   //等待转换完成，100为最大等待时间，单位为ms
+ 
+ if(HAL_IS_BIT_SET(HAL_ADC_GetState(&hadc1), HAL_ADC_STATE_REG_EOC))
+ {
+  ADC_Value = HAL_ADC_GetValue(&hadc1);      //获取AD值
+  rt_kprintf("ADC1 Reading:%u\n", ADC_Value);
+	voltage = ADC_Value*3.3/4096;   // 算出电压值
+	Lux = (3300-(unsigned int)(voltage*1000))/2;  // 获得近似光强
+  rt_kprintf("---Light sensor:%u Lux---\n", Lux);
+ }
+
+	sprintf(temperature_string,"t0.txt=\"%u'C\"", temperature);   //  构建串口屏的字符串命令
+	sprintf(humidity_string,"t1.txt=\"%u%%\"", humidity/2);
+	sprintf(light_string,"t2.txt=\"%ulx\"", Lux);
+ 	UART5_output(temperature_string);   // 串口屏输出
+	UART5_output(humidity_string);
+	UART5_output(light_string);
+	
+	rt_thread_mdelay(3000);  // 检测间隔3000ms
+	}
+}
+MSH_CMD_EXPORT(sensor_thread_entry, Sensors start to detect);
+
+static void L610_thread_entry(void* parameter)  // 广和通线程
+{
+	char connect[] = "AT+CLOUDAUTH=\"a1iKWF07Pbb\",\"ADP_L610\",\"7727d7aad67ccb07a259e5b27ba4b6e1\",\"iot-as-mqtt.cn-shanghai.aliyuncs.com\"\r\n";
+	char keep_alive[] = "AT+CLOUDCONN=80,0,4\r\n";
+	char success[] = "AT+CLOUDPUB=\"/a1iKWF07Pbb/ADP_L610/user/get\",1,\"MCU connection sucess\"\r\n";
+	char Data_string[100] = {0};      //  构建L610的aT命令字符串
+	
+	
+	rt_thread_mdelay(4000);  // 等待L610启动
+	USART1_output(connect);  // 连接阿里云
+	rt_thread_mdelay(1000);
+	USART1_output(keep_alive); // 保活
+	rt_thread_mdelay(1000);
+	USART1_output(success);
+	rt_kprintf("AT+CLOUDPUB=\"/a1iKWF07Pbb/ADP_L610/user/get\",1,\"MCU connection sucess\"\n");
+	rt_thread_mdelay(1000);
+	while(1)
+	{
+		sprintf(Data_string,"AT+CLOUDPUB=\"/a1iKWF07Pbb/ADP_L610/user/get\",1,\"Temperature:%u Humidity:%u Lux:%u CO2:%u\"\r\n", temperature, humidity, Lux, sgp30_data.co2);
+		USART1_output(Data_string);  // 定期上传数据
+		rt_kprintf("Send message to Ali_Cloud");
+		rt_thread_mdelay(30000);
+	}
+}
+
+static void watchdog_thread_entry(void* parameter) // 看门狗线程
+{
+	while(1)
+	{
+		if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE) != RESET)  // 检测广和通下发的数据
+    {
+       cloudmessage = huart1.Instance->RDR & 0xff;
+			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_RESET);
+			 rt_thread_mdelay(2000);
+			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
+    }
+		else
+				__HAL_UART_CLEAR_OREFLAG(&huart1);
+		
+		if(Lux<1000)  // 检测光强是否过低
+		{
+			for(int i=0;i<10;i++)   
+			{
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+				rt_thread_mdelay(100);
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+				rt_thread_mdelay(100);
+			}
+		}
+		rt_thread_mdelay(500);
+	}
+}
+
+static void led_thread_entry(void* parameter)   // LED闪烁线程
+{
+	GPIO_InitTypeDef GPIO_InitStruct = {0};
+	GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;       // 初始化LED灯GPIO 
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+	
+	rt_kprintf("LED blink start\n");
+	while(1)
+	{
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+		rt_thread_mdelay(1000);
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+		rt_thread_mdelay(1000);
+	}
+}
+
+static void SGP30_thread_entry(void* parameter)   // SGP30线程
+{
 	MX_I2C2_Init();
 	rt_kprintf("SGP30 start!\n");
 	if (-1 == sgp30_init())
 			{
 					printf("sgp30 init fail\r\n");
-					/* 直接进入死机 */
 					rt_kprintf("SGP30 init failed!\n");
-					while(1);
+					UART5_output("SGP30 init failed!");
 			}
 	rt_kprintf("SGP30 init success(it takes about 15s to get the data since start)\n");
-
-	while(1)
-{
-	DHT11_GET_DATA(&humidity, &temperature);
-  rt_kprintf("---Temperature:%u 'C Humidity:%u%---\n", temperature, humidity);
-	HAL_ADC_Start(&hadc1);     //启动光敏电阻ADC转换
-	HAL_ADC_PollForConversion(&hadc1, 100);   //等待转换完成，50为最大等待时间，单位为ms
- 
- if(HAL_IS_BIT_SET(HAL_ADC_GetState(&hadc1), HAL_ADC_STATE_REG_EOC))
- {
-  ADC_Value = HAL_ADC_GetValue(&hadc1);   //获取AD值
-  rt_kprintf("ADC1 Reading:%u\n", ADC_Value);
-	voltage = ADC_Value*3.3/4096;
-  rt_kprintf("---Light sensor Voltage value:%u mV---\n", (unsigned int)(voltage*1000));
- }
- 
-	char temperature_string[20] = {0};      //  构建串口屏的字符串命令
-	sprintf(temperature_string,"t0.txt=\"%u'C\"", temperature);
-	
-	char humidity_string[20] = {0};
-	sprintf(humidity_string,"t1.txt=\"%u%%\"", humidity/2);
-	
-	char light_string[20] = {0};
-	Lux = (4096-(unsigned int)(voltage*1000))/2;
-	sprintf(light_string,"t2.txt=\"%ulx\"", Lux);
- 	UART5_output(temperature_string);
-	UART5_output(humidity_string);
-	UART5_output(light_string);
-	
-  while(1) 
+	char CO2_string[20] = {0};
+	 while(1) // SGP30读取数据
 	{
 		if( -1 == sgp30_read()) 
 		{
@@ -316,66 +376,12 @@ static void sensor_thread_entry(void* parameter)  // 传感器线程
 			else
 			{
 				rt_kprintf("---SGP30 read success, CO2:%4d ppm, TVOC:%4d ppd---\n", sgp30_data.co2, sgp30_data.tvoc);
+				sprintf(CO2_string,"t3.txt=\"CO2:%uppm\"", sgp30_data.co2);
+				UART5_output(CO2_string);
 				break;
 			}
 		}
 		rt_thread_mdelay(3000);
-	}
-	char CO2_string[20] = {0};
-	sprintf(CO2_string,"t3.txt=\"CO2:%uppm\"",sgp30_data.co2);
-	UART5_output(CO2_string);
-	rt_thread_mdelay(10000);
-}
-}
-MSH_CMD_EXPORT(sensor_thread_entry, Sensors start to detect);
-
-static void tester_thread_entry(void* parameter)
-{
-	char connect[] = "AT+CLOUDAUTH=\"a1iKWF07Pbb\",\"ADP_L610\",\"7727d7aad67ccb07a259e5b27ba4b6e1\",\"iot-as-mqtt.cn-shanghai.aliyuncs.com\"\r\n";
-	char keep_alive[] = "AT+CLOUDCONN=80,0,4\r\n";
-	char sendto[] = "AT+CLOUDPUB=\"/a1iKWF07Pbb/ADP_L610/user/get\",1,\"MCU sucess\"\r\n";
-	
-	char Data_string[100] = {0};      //  构建串口屏的字符串命令
-	
-	
-	USART1_output(connect);
-	rt_thread_mdelay(1000);
-	USART1_output(keep_alive);
-	rt_thread_mdelay(1000);
-	while(1)
-	{
-		/*
-		if(Lux<1000)
-		{
-			for(int i=0;i<10;i++)
-			{
-				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-				rt_thread_mdelay(100);
-				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-				rt_thread_mdelay(100);
-			}
-		}
-		*/
-		sprintf(Data_string,"AT+CLOUDPUB=\"/a1iKWF07Pbb/ADP_L610/user/get\",1,\"Temperature:%u Humidity:%u Lux:%u CO2:%u\"\r\n", temperature, humidity, Lux, sgp30_data.co2);
-		USART1_output(Data_string);
-		rt_kprintf("Send message to Ali_Cloud");
-		rt_thread_mdelay(30000);
-	}
-}
-
-static void watchdog_thread_entry(void* parameter)
-{
-	while(1)
-	{
-		if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE) != RESET)
-    {
-       cloudmessage = huart1.Instance->RDR & 0xff;
-			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_RESET);
-			 rt_thread_mdelay(2000);
-			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
-    }
-		__HAL_UART_CLEAR_OREFLAG(&huart1);
-		rt_thread_mdelay(10);
 	}
 }
 
@@ -417,16 +423,16 @@ int main(void)
   MX_ADC1_Init();
   MX_UART5_Init();
   /* USER CODE BEGIN 2 */
-	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
-	HAL_ADCEx_Calibration_Start(&hadc1, 100);
-	UART5_output("t0.txt=\"26'C\"");
+	HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);  // DHT11电平初始化
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);  // 风扇电平初始化
+	HAL_ADCEx_Calibration_Start(&hadc1, 100); // ADC初始化
+	UART5_output("t0.txt=\"26'C\"");  // 串口屏显示初始化
 	UART5_output("t1.txt=\"50%\"");
 	UART5_output("t2.txt=\"1000lx\"");
 	UART5_output("t3.txt=\"CO2:400ppm\"");
-	rt_thread_mdelay(2000);
+	rt_thread_mdelay(1000);
 	
-	rt_err_t rst;
+	rt_err_t rst;  // 起线程的句柄
 	rst = rt_thread_init(&led_thread,
 						"ledshine",
 						led_thread_entry,
@@ -437,7 +443,7 @@ int main(void)
 						20);
 	if(rst == RT_EOK)
 	{
-		rt_thread_startup(&led_thread);
+		rt_thread_startup(&led_thread);  // 启动led线程
 	}
 	
 	rst = rt_thread_init(&sensor_thread,
@@ -450,20 +456,34 @@ int main(void)
 						20);
 	if(rst == RT_EOK)
 	{
-		rt_thread_startup(&sensor_thread);
+		rt_thread_startup(&sensor_thread); // 启动传感器线程
 	}
 	
-	rst = rt_thread_init(&tester_thread,
-						"tester thread",
-						tester_thread_entry,
+	rst = rt_thread_init(&SGP30_thread,
+						"SGP30 thread",
+						SGP30_thread_entry,
 						RT_NULL,
-						&tester_thread_stack[0],
-						sizeof(tester_thread_stack),
+						&SGP30_thread_stack[0],
+						sizeof(SGP30_thread_stack),
+						RT_THREAD_PRIORITY_MAX-2,
+						10);
+	if(rst == RT_EOK)
+	{
+		rt_thread_startup(&SGP30_thread); // 启动SGP30线程
+	}
+
+	
+	rst = rt_thread_init(&L610_thread,
+						"L610 thread",
+						L610_thread_entry,
+						RT_NULL,
+						&L610_thread_stack[0],
+						sizeof(L610_thread_stack),
 						RT_THREAD_PRIORITY_MAX-2,
 						5);
 	if(rst == RT_EOK)
 	{
-		rt_thread_startup(&tester_thread);
+		rt_thread_startup(&L610_thread); // 启动广和通
 	}
 	
 	rst = rt_thread_init(&watchdog_thread,
@@ -476,11 +496,12 @@ int main(void)
 						5);
 	if(rst == RT_EOK)
 	{
-		rt_thread_startup(&watchdog_thread);
+		rt_thread_startup(&watchdog_thread);   // 启动看门狗
 	}
 	
-	rt_kprintf("RT-Thread start successfully!\n");
+	rt_kprintf("RT-Thread start successfully!\n");  
 	return 0;
+	
   /* USER CODE END 2 */
 
   /* Infinite loop */
